@@ -1,0 +1,4 @@
+# pg_dict_compression extension
+comment 'dictionary compression method'
+default_version = '1.0'
+module_pathname='$libdir/pg_dict_compression'
