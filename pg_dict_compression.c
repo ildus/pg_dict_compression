@@ -112,9 +112,12 @@ dict_check(Form_pg_attribute att, List *options)
 	if (strcmp(def->defname, "dict") != 0)
 		elog(ERROR, "unknown option '%s'", def->defname);
 
-	val = defGetString(def);
+	val = pstrdup(defGetString(def));
 	while (strtok(val, DELIM) != NULL)
+	{
 		ntokens++;
+		val = NULL;
+	}
 
 	if (ntokens < 1 || ntokens > 254)
 		elog(ERROR, "correct number of tokens should be specified (between 1 and 254)");
@@ -160,14 +163,23 @@ dict_initstate(Oid acoid, List *options)
 	char	   *val,
 			   *tok;
 	int			i = 0;
+	List	   *tokens = NIL;
+	ListCell   *lc;
 
-	val = defGetString(def);
-	while (strtok(val, DELIM) != NULL)
-		state->ntokens++;
+	/* Parse dict words and save them in the state */
+	val = pstrdup(defGetString(def));
+	tokens = lappend(tokens, strtok(val, DELIM));
 
+	while ((tok = strtok(NULL, DELIM)) != NULL)
+		tokens = lappend(tokens, tok);
+
+	state->ntokens = list_length(tokens);
 	state->tokens = palloc(sizeof(char *) * state->ntokens);
-	while ((tok = strtok(val, DELIM)) != NULL)
-		state->tokens[i++] = tok;
+	foreach(lc, tokens)
+	{
+		state->tokens[i++] = (char *) lfirst(lc);
+	}
+	list_free(tokens);
 
 	/* Create root of borh tree */
 	i = make_bnode(state, 0);
