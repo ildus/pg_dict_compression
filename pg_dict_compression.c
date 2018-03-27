@@ -7,30 +7,100 @@
 #include "utils/datum.h"
 
 PG_MODULE_MAGIC;
+PG_FUNCTION_INFO_V1( dict_compression_handler );
 
-/* borh tree */
+#define DELIM (" \0xFF")
+
+/* borh tree for aho-corasick algorithm */
 typedef struct bnode bnode;
 struct bnode
 {
-	char	code;
-	int		nnodes;
-	bnode **nodes;
-	bool	leaf;
+	int		next[255];	/* indexes for each char in dict_state.nodes or -1 */
+	int		idx;		/* index of token in tokens */
+	uint8	code;		/* char of this node */
+	bnode  *parent;		/* parent of this node */
+	bnode  *link;		/* suffix link */
+	int		transitions[255];	/* cached transitions by the char */
 };
 
 /* compression options state */
 typedef struct
 {
-	Size	nwords;
-	char  **words;
+	int		ntokens;
+	char  **tokens;
+	bnode  *nodes;
+	int		nnodes;
+	int		nallocated;
 } dict_state;
 
-PG_FUNCTION_INFO_V1( dict_compression_handler );
+bnode *get_suffix_node(dict_state *state, bnode *node);
+int get_transition_link(dict_state *state, bnode *node, uint8 c);
+
+bnode *
+get_suffix_node(dict_state *state, bnode *node)
+{
+	if (node->link == NULL)
+	{
+		if (node->parent == NULL)
+			node->link = node;	/* root points to self */
+		else
+		{
+			bnode  *psuffix = get_suffix_node(state, node->parent);
+			int		tlink = get_transition_link(state, psuffix, node->code);
+
+			node->link = &state->nodes[tlink];
+		}
+	}
+
+	return node->link;
+}
+
+int
+get_transition_link(dict_state *state, bnode *node, uint8 c)
+{
+	if (node->transitions[c] == -1)
+	{
+		if (node->next[c] != -1)
+			node->transitions[c] = node->next[c];
+		else
+			node->transitions[c] = (node->parent == NULL) ? 0 :
+				get_transition_link(state, get_suffix_node(state, node), c);
+	}
+	return node->transitions[c];
+}
+
+static int
+make_bnode(dict_state *state, uint8 code)
+{
+	int		idx;
+	bnode  *curnode;
+
+	/* Extend nodes array if needed */
+	if (state->nnodes == state->nallocated)
+	{
+		state->nallocated += 10;
+		if (state->nodes == NULL)
+			state->nodes = palloc(sizeof(bnode) * state->nallocated);
+		else
+			state->nodes = repalloc(state->nodes,
+									sizeof(bnode) * state->nallocated);
+	}
+
+	/* Init basic state for the node, set indexes to -1 */
+	idx = state->nnodes++;
+	curnode = &state->nodes[idx];
+	curnode->idx = -1;
+	curnode->code = code;
+	curnode->link = NULL;
+	curnode->parent = NULL;
+	memset(curnode->next, 0xFF, sizeof(curnode->next));
+	return idx;
+}
 
 static void
 dict_check(Form_pg_attribute att, List *options)
 {
-	Size		nwords = 0;
+	int			ntokens = 0;
 	char	   *val;
 	DefElem    *def;
 
@@ -43,11 +113,43 @@ dict_check(Form_pg_attribute att, List *options)
 		elog(ERROR, "unknown option '%s'", def->defname);
 
 	val = defGetString(def);
-	while (strtok(val, " ") != NULL)
-		nwords++;
+	while (strtok(val, DELIM) != NULL)
+		ntokens++;
 
-	if (nwords < 1 || nwords > 254)
-		elog(ERROR, "correct number of words should be specified (between 1 and 254)");
+	if (ntokens < 1 || ntokens > 254)
+		elog(ERROR, "correct number of tokens should be specified (between 1 and 254)");
+}
+
+/*
+ * Make borh tree from specified dictionary
+ */
+static void
+dict_append_tokens(dict_state *state)
+{
+	int		i,
+			k;
+
+	for (i = 0; i < state->ntokens; i++)
+	{
+		char	*token = state->tokens[i];
+		bnode	*curnode = &state->nodes[0];
+
+		for (k = 0; k < strlen(token); k++) {
+			uint8 c = (uint8) token[k];
+
+			/* 0xFF is reserved for mark of compressed token */
+			Assert(c < 255);
+			if (curnode->next[c] == -1)
+			{
+				curnode->next[c] = make_bnode(state, c);
+				state->nodes[curnode->next[c]].parent = curnode;
+			}
+
+			curnode = &state->nodes[curnode->next[c]];
+		}
+
+		curnode->idx = i;
+	}
 }
 
 static void *
@@ -60,12 +162,19 @@ dict_initstate(Oid acoid, List *options)
 	int			i = 0;
 
 	val = defGetString(def);
-	while (strtok(val, " ") != NULL)
-		state->nwords++;
+	while (strtok(val, DELIM) != NULL)
+		state->ntokens++;
 
-	state->words = palloc(sizeof(char *) * state->nwords);
-	while ((tok = strtok(val, " ")) != NULL)
-		state->words[i++] = tok;
+	state->tokens = palloc(sizeof(char *) * state->ntokens);
+	while ((tok = strtok(val, DELIM)) != NULL)
+		state->tokens[i++] = tok;
+
+	/* Create root of borh tree */
+	i = make_bnode(state, 0);
+	Assert(i == 0);
+
+	/* Append tokens from dictionary to tree */
+	dict_append_tokens(state);
 
 	return (void *) state;
 }
