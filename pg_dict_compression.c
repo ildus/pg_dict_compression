@@ -1,8 +1,9 @@
-#include "postgres.h"
-#include "fmgr.h"
 #include "access/cmapi.h"
+#include "catalog/pg_type.h"
 #include "commands/defrem.h"
+#include "fmgr.h"
 #include "nodes/parsenodes.h"
+#include "postgres.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 
@@ -16,8 +17,9 @@ typedef struct bnode bnode;
 struct bnode
 {
 	int		next[255];	/* indexes for each char in dict_state.nodes or -1 */
-	int		idx;		/* index of token in tokens */
+	int		level;
 	uint8	code;		/* char of this node */
+	int		idx;		/* index of token in tokens */
 	bnode  *parent;		/* parent of this node */
 	bnode  *link;		/* suffix link */
 	int		transitions[255];	/* cached transitions by the char */
@@ -70,9 +72,9 @@ get_transition_link(dict_state *state, bnode *node, uint8 c)
 }
 
 static int
-make_bnode(dict_state *state, uint8 code)
+make_bnode(dict_state *state, uint8 code, int level)
 {
-	int		idx;
+	int		loc;
 	bnode  *curnode;
 
 	/* Extend nodes array if needed */
@@ -87,14 +89,18 @@ make_bnode(dict_state *state, uint8 code)
 	}
 
 	/* Init basic state for the node, set indexes to -1 */
-	idx = state->nnodes++;
-	curnode = &state->nodes[idx];
+	loc = state->nnodes++;
+	curnode = &state->nodes[loc];
 	curnode->idx = -1;
 	curnode->code = code;
 	curnode->link = NULL;
 	curnode->parent = NULL;
+	curnode->level = level;
+
+	/* initialize by -1 values */
 	memset(curnode->next, 0xFF, sizeof(curnode->next));
-	return idx;
+	memset(curnode->transitions, 0xFF, sizeof(curnode->transitions));
+	return loc;
 }
 
 static void
@@ -103,6 +109,10 @@ dict_check(Form_pg_attribute att, List *options)
 	int			ntokens = 0;
 	char	   *val;
 	DefElem    *def;
+
+	/* TODO: check binary compatible types too */
+	if (att->atttypid != TEXTOID && att->atttypid != BYTEAOID)
+		elog(ERROR, "dicitonary compression is supported only for text and bytea");
 
 	if (list_length(options) != 1)
 		elog(ERROR, "incorrect number of options");
@@ -129,8 +139,8 @@ dict_check(Form_pg_attribute att, List *options)
 static void
 dict_append_tokens(dict_state *state)
 {
-	int		i,
-			k;
+	int		i;
+	int		k;
 
 	for (i = 0; i < state->ntokens; i++)
 	{
@@ -144,7 +154,8 @@ dict_append_tokens(dict_state *state)
 			Assert(c < 255);
 			if (curnode->next[c] == -1)
 			{
-				curnode->next[c] = make_bnode(state, c);
+				/* Create child node for this symbol */
+				curnode->next[c] = make_bnode(state, c, curnode->level + 1);
 				state->nodes[curnode->next[c]].parent = curnode;
 			}
 
@@ -152,6 +163,7 @@ dict_append_tokens(dict_state *state)
 		}
 
 		curnode->idx = i;
+		Assert(curnode->level == strlen(token));
 	}
 }
 
@@ -173,7 +185,8 @@ dict_initstate(Oid acoid, List *options)
 	while ((tok = strtok(NULL, DELIM)) != NULL)
 		tokens = lappend(tokens, tok);
 
-	state->ntokens = list_length(tokens);
+	Assert(list_length(tokens) < 255);
+	state->ntokens = (uint8) list_length(tokens);
 	state->tokens = palloc(sizeof(char *) * state->ntokens);
 	foreach(lc, tokens)
 	{
@@ -182,7 +195,7 @@ dict_initstate(Oid acoid, List *options)
 	list_free(tokens);
 
 	/* Create root of borh tree */
-	i = make_bnode(state, 0);
+	i = make_bnode(state, 0, 0);
 	Assert(i == 0);
 
 	/* Append tokens from dictionary to tree */
@@ -194,13 +207,108 @@ dict_initstate(Oid acoid, List *options)
 static bytea *
 dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 {
-	return NULL;
+#define DEST_ADD(c) \
+	if (dpos >= srclen - 1) { pfree(res); return NULL; } \
+	dest[dpos++] = 0xFF; \
+	dest[dpos++] = (uint8) c;
+
+	int			pos = 0,
+				dpos = 0;
+	int			srclen = (Size) VARSIZE_ANY_EXHDR(value);
+	dict_state *state = (dict_state *) cmoptions->acstate;
+	uint8	   *src = (uint8 *) VARDATA(value);
+	bytea	   *res = palloc0(srclen + VARHDRSZ_CUSTOM_COMPRESSED);
+	uint8	   *dest = (uint8 *) res + VARHDRSZ_CUSTOM_COMPRESSED;
+	bnode	   *curnode = &state->nodes[0];
+
+	while (pos < srclen)
+	{
+		int		initpos = pos;
+		uint8	code = src[pos];
+
+		/* escape 0xFF */
+		while (code = src[pos], code == 0xFF)
+		{
+			DEST_ADD(0xFF);
+			pos++;
+		}
+
+		curnode = &state->nodes[0]; /* search from root */
+
+		/* TODO: move by suffixes */
+		while (code = src[pos++], curnode->next[code] != -1)
+		{
+			curnode = &state->nodes[curnode->next[code]];
+			if (curnode->idx !=- 1)
+			{
+				/* we found a match */
+				DEST_ADD(curnode->idx);
+				Assert(curnode->level == pos - initpos);
+				goto next;
+			}
+		}
+
+		if (dpos + pos - initpos >= srclen)
+		{
+			pfree(res);
+			return NULL;
+		}
+
+		/* prefix didn't match */
+		memcpy(&dest[dpos], &src[initpos], pos - initpos);
+		dpos += pos - initpos;
+next:
+		/* next */;
+	}
+
+	SET_VARSIZE_COMPRESSED(res, dpos + VARHDRSZ_CUSTOM_COMPRESSED);
+	return res;
 }
 
 static bytea *
 dict_decompress(CompressionAmOptions *cmoptions, const bytea *value)
 {
-	return NULL;
+	dict_state *state = (dict_state *) cmoptions->acstate;
+
+	int		srclen = VARSIZE_ANY(value) - VARHDRSZ_CUSTOM_COMPRESSED;
+	int		dstlen = VARRAWSIZE_4B_C(value);
+	int		pos = 0,
+			dpos = 0;
+	bytea  *res;
+	uint8  *src = (uint8 *) value + VARHDRSZ_CUSTOM_COMPRESSED;
+	uint8  *dst;
+
+	res = (bytea *) palloc(dstlen + VARHDRSZ);
+	dst = (uint8 *) VARDATA(res);
+
+	SET_VARSIZE(res, dstlen + VARHDRSZ);
+	while (pos < srclen)
+	{
+		if (src[pos] == 0xFF)
+		{
+			pos++;
+
+			/* is it escaped 0xFF? */
+			if (src[pos] == 0xFF)
+				dst[dpos++] = 0xFF;
+			else
+			{
+				char *token = state->tokens[src[pos]];
+				int len = strlen(token); /* TODO: save it somewhere */
+
+				Assert(token != NULL);
+				memcpy(&dst[dpos], token, len);
+				dpos += len;
+			}
+			pos++;
+		}
+		else
+			dst[dpos++] = src[pos++];
+	}
+
+	/* check correctness */
+	Assert(pos == srclen && dpos == dstlen);
+	return res;
 }
 
 Datum
@@ -209,7 +317,6 @@ dict_compression_handler(PG_FUNCTION_ARGS)
 	CompressionAmRoutine *routine = makeNode(CompressionAmRoutine);
 
 	routine->cmcheck = dict_check;
-	routine->cmdrop = NULL;
 	routine->cminitstate = dict_initstate;
 	routine->cmcompress = dict_compress;
 	routine->cmdecompress = dict_decompress;
