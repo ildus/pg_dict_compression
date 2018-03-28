@@ -30,6 +30,7 @@ typedef struct
 {
 	int		ntokens;
 	char  **tokens;
+	int	   *lengths;
 	bnode  *nodes;
 	int		nnodes;
 	int		nallocated;
@@ -188,9 +189,13 @@ dict_initstate(Oid acoid, List *options)
 	Assert(list_length(tokens) < 255);
 	state->ntokens = (uint8) list_length(tokens);
 	state->tokens = palloc(sizeof(char *) * state->ntokens);
+	state->lengths = palloc(sizeof(int) * state->ntokens);
+
 	foreach(lc, tokens)
 	{
-		state->tokens[i++] = (char *) lfirst(lc);
+		state->tokens[i] = (char *) lfirst(lc);
+		state->lengths[i] = strlen(state->tokens[i]);
+		i++;
 	}
 	list_free(tokens);
 
@@ -294,7 +299,7 @@ dict_decompress(CompressionAmOptions *cmoptions, const bytea *value)
 			else
 			{
 				char *token = state->tokens[src[pos]];
-				int len = strlen(token); /* TODO: save it somewhere */
+				int len = state->lengths[src[pos]];
 
 				Assert(token != NULL);
 				memcpy(&dst[dpos], token, len);
