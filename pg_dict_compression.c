@@ -22,7 +22,7 @@ struct bnode
 	int		idx;		/* index of token in tokens */
 	bnode  *parent;		/* parent of this node */
 	bnode  *link;		/* suffix link */
-	int		transitions[255];	/* cached transitions by the char */
+	int		gotos[255];	/* cached gotos by the char */
 };
 
 /* compression options state */
@@ -37,21 +37,21 @@ typedef struct
 } dict_state;
 
 bnode *get_suffix_node(dict_state *state, bnode *node);
-int get_transition_link(dict_state *state, bnode *node, uint8 c);
+int get_goto_link(dict_state *state, bnode *node, uint8 c);
 
 bnode *
 get_suffix_node(dict_state *state, bnode *node)
 {
 	if (node->link == NULL)
 	{
-		if (node->parent == NULL)
+		if (node->level == 0)
 			node->link = node;	/* root points to self */
 		else
 		{
 			bnode  *psuffix = get_suffix_node(state, node->parent);
-			int		tlink = get_transition_link(state, psuffix, node->code);
+			int		g = get_goto_link(state, psuffix, node->code);
 
-			node->link = &state->nodes[tlink];
+			node->link = &state->nodes[g];
 		}
 	}
 
@@ -59,17 +59,17 @@ get_suffix_node(dict_state *state, bnode *node)
 }
 
 int
-get_transition_link(dict_state *state, bnode *node, uint8 c)
+get_goto_link(dict_state *state, bnode *node, uint8 c)
 {
-	if (node->transitions[c] == -1)
+	if (node->gotos[c] == -1)
 	{
 		if (node->next[c] != -1)
-			node->transitions[c] = node->next[c];
+			node->gotos[c] = node->next[c];
 		else
-			node->transitions[c] = (node->parent == NULL) ? 0 :
-				get_transition_link(state, get_suffix_node(state, node), c);
+			node->gotos[c] = (node->level == 0) ? 0 :
+				get_goto_link(state, get_suffix_node(state, node), c);
 	}
-	return node->transitions[c];
+	return node->gotos[c];
 }
 
 static int
@@ -100,7 +100,7 @@ make_bnode(dict_state *state, uint8 code, int level)
 
 	/* initialize by -1 values */
 	memset(curnode->next, 0xFF, sizeof(curnode->next));
-	memset(curnode->transitions, 0xFF, sizeof(curnode->transitions));
+	memset(curnode->gotos, 0xFF, sizeof(curnode->gotos));
 	return loc;
 }
 
@@ -228,7 +228,8 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 
 	while (pos < srclen)
 	{
-		int		initpos = pos;
+		int		initpos = pos,
+				level;
 		uint8	code = src[pos];
 
 		/* escape 0xFF */
@@ -239,7 +240,6 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 		}
 
 again:
-		curnode = &state->nodes[0];
 		while (code = src[pos++], curnode->next[code] != -1)
 		{
 			curnode = &state->nodes[curnode->next[code]];
@@ -252,11 +252,19 @@ again:
 			}
 		}
 
-		/*
+		level = curnode->level;
 		curnode = get_suffix_node(state, curnode);
-		if (curnode->parent != NULL)
+		if (curnode->level)
+		{
+			int diff;
+			diff = level - curnode->level;
+
+			/* copy beginning of previous prefix */
+			memcpy(&dest[dpos], &src[initpos], pos - initpos - diff);
+			dpos += pos - initpos - diff;
+			initpos += diff;
 			goto again;
-		*/
+		}
 
 		if (dpos + pos - initpos >= srclen)
 		{
