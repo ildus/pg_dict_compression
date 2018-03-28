@@ -238,9 +238,8 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 			pos++;
 		}
 
-		curnode = &state->nodes[0]; /* search from root */
-
-		/* TODO: move by suffixes */
+again:
+		curnode = &state->nodes[0];
 		while (code = src[pos++], curnode->next[code] != -1)
 		{
 			curnode = &state->nodes[curnode->next[code]];
@@ -252,6 +251,12 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 				goto next;
 			}
 		}
+
+		/*
+		curnode = get_suffix_node(state, curnode);
+		if (curnode->parent != NULL)
+			goto again;
+		*/
 
 		if (dpos + pos - initpos >= srclen)
 		{
