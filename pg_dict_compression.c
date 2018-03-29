@@ -219,11 +219,23 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 	uint8	   *dest = (uint8 *) res + VARHDRSZ_CUSTOM_COMPRESSED;
 	bnode	   *curnode = &state->nodes[0];
 
-	while (pos < srclen)
+	while (initpos < srclen)
 	{
 		int		level,
 				copylen;
 		uint8	code;
+
+		if (curnode->idx != -1)
+		{
+			/* we found a match */
+			DEST_ADD(curnode->idx);
+			curnode = &state->nodes[0];	/* start from the root */
+			initpos = pos;
+			continue;
+		}
+
+		if (pos >= srclen)
+			goto rem;
 
 		/* escape 0xFF */
 		if (code = src[pos], code == 0xFF)
@@ -234,14 +246,6 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 			continue;
 		}
 
-		if (curnode->idx != -1)
-		{
-			/* we found a match */
-			DEST_ADD(curnode->idx);
-			curnode = &state->nodes[0];	/* start from the root */
-			initpos = pos;
-			continue;
-		}
 
 		if (curnode->next[code] != -1)
 		{
@@ -267,7 +271,9 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 		}
 
 		/* prefix didn't match */
-		copylen = (pos - initpos + 1);
+		pos++;
+rem:
+		copylen = (pos - initpos);
 		if (dpos + copylen > srclen)
 		{
 			pfree(res);
@@ -276,7 +282,6 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 
 		memcpy(&dest[dpos], &src[initpos], copylen);
 		dpos += copylen;
-		pos++;
 		initpos = pos;
 	}
 
@@ -337,8 +342,8 @@ dict_compression_test(PG_FUNCTION_ARGS)
 	text	*t = PG_GETARG_TEXT_PP(1);
 	CompressionAmOptions	*amoptions = lookup_amoptions(acoid);
 	bytea	*res = dict_compress(amoptions, t);
-	toast_set_compressed_datum_info(res, amoptions->acoid,
-		VARSIZE_ANY_EXHDR(DatumGetPointer(t)));
+	toast_set_compression_info(res, amoptions->acoid,
+						VARSIZE_ANY_EXHDR(DatumGetPointer(t)));
 	PG_RETURN_BYTEA_P(res);
 }
 

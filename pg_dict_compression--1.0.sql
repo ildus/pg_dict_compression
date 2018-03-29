@@ -4,7 +4,7 @@ AS 'pg_dict_compression', 'dict_compression_handler'
 LANGUAGE C STRICT;
 
 CREATE FUNCTION dict_compression_test(OID, TEXT)
-RETURNS BYTEA
+RETURNS TEXT
 AS 'pg_dict_compression', 'dict_compression_test'
 LANGUAGE C STRICT;
 
