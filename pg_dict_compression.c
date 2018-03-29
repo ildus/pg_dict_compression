@@ -1,4 +1,5 @@
 #include "access/cmapi.h"
+#include "access/tuptoaster.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "fmgr.h"
@@ -9,6 +10,7 @@
 
 PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1( dict_compression_handler );
+PG_FUNCTION_INFO_V1( dict_compression_test );
 
 #define DELIM (" \0xFF")
 
@@ -208,6 +210,7 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 	dest[dpos++] = (uint8) c;
 
 	int			pos = 0,
+				initpos = 0,
 				dpos = 0;
 	int			srclen = (Size) VARSIZE_ANY_EXHDR(value);
 	dict_state *state = (dict_state *) cmoptions->acstate;
@@ -218,8 +221,8 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 
 	while (pos < srclen)
 	{
-		int		initpos,
-				level;
+		int		level,
+				copylen;
 		uint8	code;
 
 		/* escape 0xFF */
@@ -227,24 +230,25 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 		{
 			DEST_ADD(0xFF);
 			pos++;
+			initpos = pos;
 			continue;
 		}
 
-		/* save the first position */
-		initpos = pos;
-
-again:
-		while (curnode->next[code] != -1)
+		if (curnode->idx != -1)
 		{
+			/* we found a match */
+			DEST_ADD(curnode->idx);
+			curnode = &state->nodes[0];	/* start from the root */
+			initpos = pos;
+			continue;
+		}
+
+		if (curnode->next[code] != -1)
+		{
+			/* we found a child, change the current state to it */
 			curnode = &state->nodes[curnode->next[code]];
-			code = src[pos++];
-			if (curnode->idx !=- 1)
-			{
-				/* we found a match */
-				DEST_ADD(curnode->idx);
-				Assert(curnode->level == pos - initpos);
-				goto next;
-			}
+			pos++;
+			continue;
 		}
 
 		level = curnode->level;
@@ -254,26 +258,26 @@ again:
 			int diff;
 			diff = level - curnode->level;
 
-			/* copy beginning of previous prefix */
+			/* we found a suffix node, copy beginning of previous prefix */
 			Assert(diff > 0);
 			memcpy(&dest[dpos], &src[initpos], diff);
 			dpos += diff;
 			initpos += diff;
-			goto again;
+			continue;
 		}
 
-		pos++;
-		if (dpos + pos - initpos >= srclen)
+		/* prefix didn't match */
+		copylen = (pos - initpos + 1);
+		if (dpos + copylen > srclen)
 		{
 			pfree(res);
 			return NULL;
 		}
 
-		/* prefix didn't match */
-		memcpy(&dest[dpos], &src[initpos], pos - initpos);
-		dpos += pos - initpos;
-next:
-		/* next */;
+		memcpy(&dest[dpos], &src[initpos], copylen);
+		dpos += copylen;
+		pos++;
+		initpos = pos;
 	}
 
 	SET_VARSIZE_COMPRESSED(res, dpos + VARHDRSZ_CUSTOM_COMPRESSED);
@@ -324,6 +328,18 @@ dict_decompress(CompressionAmOptions *cmoptions, const bytea *value)
 	/* check correctness */
 	Assert(pos == srclen && dpos == dstlen);
 	return res;
+}
+
+Datum
+dict_compression_test(PG_FUNCTION_ARGS)
+{
+	Oid		 acoid = PG_GETARG_OID(0);
+	text	*t = PG_GETARG_TEXT_PP(1);
+	CompressionAmOptions	*amoptions = lookup_amoptions(acoid);
+	bytea	*res = dict_compress(amoptions, t);
+	toast_set_compressed_datum_info(res, amoptions->acoid,
+		VARSIZE_ANY_EXHDR(DatumGetPointer(t)));
+	PG_RETURN_BYTEA_P(res);
 }
 
 Datum
