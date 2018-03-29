@@ -12,7 +12,7 @@ PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1( dict_compression_handler );
 PG_FUNCTION_INFO_V1( dict_compression_test );
 
-#define DELIM (" \0xFF")
+#define DELIM (" \xFF,")
 
 /* borh tree for aho-corasick algorithm */
 typedef struct bnode bnode;
