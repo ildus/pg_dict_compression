@@ -22,7 +22,6 @@ struct bnode
 	int		idx;		/* index of token in tokens */
 	bnode  *parent;		/* parent of this node */
 	bnode  *link;		/* suffix link */
-	int		gotos[255];	/* cached gotos by the char */
 };
 
 /* compression options state */
@@ -44,32 +43,20 @@ get_suffix_node(dict_state *state, bnode *node)
 {
 	if (node->link == NULL)
 	{
-		if (node->level == 0)
-			node->link = node;	/* root points to self */
+		if (node->parent == NULL || node->parent->parent == NULL)
+			node->link = &state->nodes[0];	/* first two levels to root */
 		else
 		{
 			bnode  *psuffix = get_suffix_node(state, node->parent);
-			int		g = get_goto_link(state, psuffix, node->code);
-
-			node->link = &state->nodes[g];
+			int		g = psuffix->next[node->code];
+			if (g != -1)
+				node->link = &state->nodes[g];
+			else
+				node->link = &state->nodes[0];
 		}
 	}
 
 	return node->link;
-}
-
-int
-get_goto_link(dict_state *state, bnode *node, uint8 c)
-{
-	if (node->gotos[c] == -1)
-	{
-		if (node->next[c] != -1)
-			node->gotos[c] = node->next[c];
-		else
-			node->gotos[c] = (node->level == 0) ? 0 :
-				get_goto_link(state, get_suffix_node(state, node), c);
-	}
-	return node->gotos[c];
 }
 
 static int
@@ -100,7 +87,6 @@ make_bnode(dict_state *state, uint8 code, int level)
 
 	/* initialize by -1 values */
 	memset(curnode->next, 0xFF, sizeof(curnode->next));
-	memset(curnode->gotos, 0xFF, sizeof(curnode->gotos));
 	return loc;
 }
 
@@ -108,7 +94,8 @@ static void
 dict_check(Form_pg_attribute att, List *options)
 {
 	int			ntokens = 0;
-	char	   *val;
+	char	   *val,
+			   *tok;
 	DefElem    *def;
 
 	/* TODO: check binary compatible types too */
@@ -124,8 +111,11 @@ dict_check(Form_pg_attribute att, List *options)
 		elog(ERROR, "unknown option '%s'", def->defname);
 
 	val = pstrdup(defGetString(def));
-	while (strtok(val, DELIM) != NULL)
+	while ((tok = strtok(val, DELIM)) != NULL)
 	{
+		if (strlen(tok) < 2)
+			elog(ERROR, "dictionary token length should more than 1");
+
 		ntokens++;
 		val = NULL;
 	}
@@ -228,21 +218,26 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 
 	while (pos < srclen)
 	{
-		int		initpos = pos,
+		int		initpos,
 				level;
-		uint8	code = src[pos];
+		uint8	code;
 
 		/* escape 0xFF */
-		while (code = src[pos], code == 0xFF)
+		if (code = src[pos], code == 0xFF)
 		{
 			DEST_ADD(0xFF);
 			pos++;
+			continue;
 		}
 
+		/* save the first position */
+		initpos = pos;
+
 again:
-		while (code = src[pos++], curnode->next[code] != -1)
+		while (curnode->next[code] != -1)
 		{
 			curnode = &state->nodes[curnode->next[code]];
+			code = src[pos++];
 			if (curnode->idx !=- 1)
 			{
 				/* we found a match */
@@ -260,12 +255,14 @@ again:
 			diff = level - curnode->level;
 
 			/* copy beginning of previous prefix */
-			memcpy(&dest[dpos], &src[initpos], pos - initpos - diff);
-			dpos += pos - initpos - diff;
+			Assert(diff > 0);
+			memcpy(&dest[dpos], &src[initpos], diff);
+			dpos += diff;
 			initpos += diff;
 			goto again;
 		}
 
+		pos++;
 		if (dpos + pos - initpos >= srclen)
 		{
 			pfree(res);
