@@ -72,6 +72,15 @@ NOTICE:  len: 4
  long00
 (1 row)
 
+SELECT dict_compression_test_wrapper(
+	repeat('0\0xFFhe00sher00lonshe00lohe00herhe00budgerman00\0xFF', 100)) =
+	repeat('0\0xFFhe00sher00lonshe00lohe00herhe00budgerman00\0xFF', 100);
+NOTICE:  len: 4800
+ ?column? 
+----------
+ t
+(1 row)
+
 SELECT dict_compression_test_wrapper('{"budget": 1, "german": 2}'::json::text)::json;
 NOTICE:  len: 18
  dict_compression_test_wrapper 

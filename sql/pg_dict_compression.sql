@@ -29,6 +29,9 @@ SELECT dict_compression_test_wrapper('budgerman00she');	/* 5 + 2 + 2 */
 SELECT dict_compression_test_wrapper('sh');	/* 2 */
 SELECT dict_compression_test_wrapper('lon00');	/* 5 */
 SELECT dict_compression_test_wrapper('long00');	/* 4 */
+SELECT dict_compression_test_wrapper(
+	repeat('0\0xFFhe00sher00lonshe00lohe00herhe00budgerman00\0xFF', 100)) =
+	repeat('0\0xFFhe00sher00lonshe00lohe00herhe00budgerman00\0xFF', 100);
 
 SELECT dict_compression_test_wrapper('{"budget": 1, "german": 2}'::json::text)::json;
 

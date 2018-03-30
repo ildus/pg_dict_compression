@@ -77,6 +77,7 @@ make_bnode(dict_state *state, uint8 code, int level)
 
 	/* Init basic state for the node, set indexes to -1 */
 	loc = state->nnodes++;
+
 	curnode = &state->nodes[loc];
 	curnode->idx = -1;
 	curnode->code = code;
@@ -85,7 +86,7 @@ make_bnode(dict_state *state, uint8 code, int level)
 	curnode->level = level;
 
 	/* initialize by -1 values */
-	memset(curnode->next, 0xFF, sizeof(curnode->next));
+	memset(curnode->next, 0xFF, sizeof(int) * 255);
 	return loc;
 }
 
@@ -144,26 +145,30 @@ dict_append_tokens(dict_state *state)
 
 	for (i = 0; i < state->ntokens; i++)
 	{
-		char	*token = state->tokens[i];
-		bnode	*curnode = &state->nodes[0];
+		int		nindex = 0;	/* start from root */
+		char   *token = state->tokens[i];
 
 		for (k = 0; k < strlen(token); k++) {
 			uint8 c = (uint8) token[k];
 
 			/* 0xFF is reserved for mark of compressed token */
 			Assert(c < 255);
-			if (curnode->next[c] == -1)
+			if (state->nodes[nindex].next[c] == -1)
 			{
 				/* Create child node for this symbol */
-				curnode->next[c] = make_bnode(state, c, curnode->level + 1);
-				state->nodes[curnode->next[c]].parent = curnode;
+				bnode  *curnode = &state->nodes[nindex];
+
+				/* state->nodes could change in this function */
+				int		newindex = make_bnode(state, c, curnode->level + 1);
+
+				state->nodes[nindex].next[c] = newindex;
+				state->nodes[newindex].parent = curnode;
 			}
 
-			curnode = &state->nodes[curnode->next[c]];
+			nindex = state->nodes[nindex].next[c];
 		}
-
-		curnode->idx = i;
-		Assert(curnode->level == strlen(token));
+		state->nodes[nindex].idx = i;
+		Assert(state->nodes[nindex].level == strlen(token));
 	}
 }
 
