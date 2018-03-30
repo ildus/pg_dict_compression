@@ -33,4 +33,12 @@ SELECT dict_compression_test_wrapper('long00');	/* 4 */
 SELECT dict_compression_test_wrapper('{"budget": 1, "german": 2}'::json::text)::json;
 
 DROP TABLE c1;
+
+-- params check
+CREATE TABLE c1(a text);
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression;
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (alt 'one');
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict 'o');
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict '');
+
 DROP EXTENSION pg_dict_compression;

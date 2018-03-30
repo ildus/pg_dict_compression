@@ -80,4 +80,14 @@ NOTICE:  len: 18
 (1 row)
 
 DROP TABLE c1;
+-- params check
+CREATE TABLE c1(a text);
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression;
+ERROR:  incorrect number of options
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (alt 'one');
+ERROR:  unknown option 'alt'
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict 'o');
+ERROR:  dictionary token length should more than 1
+ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict '');
+ERROR:  correct number of tokens should be specified (between 1 and 254)
 DROP EXTENSION pg_dict_compression;
