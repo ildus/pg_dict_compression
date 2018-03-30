@@ -37,10 +37,7 @@ typedef struct
 	int		nallocated;
 } dict_state;
 
-bnode *get_suffix_node(dict_state *state, bnode *node);
-int get_goto_link(dict_state *state, bnode *node, uint8 c);
-
-bnode *
+static bnode *
 get_suffix_node(dict_state *state, bnode *node)
 {
 	if (node->link == NULL)
