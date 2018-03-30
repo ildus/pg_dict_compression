@@ -101,29 +101,39 @@ dict_check(Form_pg_attribute att, List *options)
 	DefElem    *def;
 
 	/* TODO: check binary compatible types too */
-	if (att->atttypid != TEXTOID && att->atttypid != BYTEAOID)
-		elog(ERROR, "dicitonary compression is supported only for text and bytea");
+	if (att->attlen != -1 || att->attstorage == 'p')
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 (errmsg("dictionary compression is support for only variable length attributes"))));
 
 	if (list_length(options) != 1)
-		elog(ERROR, "incorrect number of options");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 (errmsg("incorrect number of options"))));
 
 	def = (DefElem *) linitial(options);
 
 	if (strcmp(def->defname, "dict") != 0)
-		elog(ERROR, "unknown option '%s'", def->defname);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 (errmsg("unknown option '%s'", def->defname))));
 
 	val = pstrdup(defGetString(def));
 	while ((tok = strtok(val, DELIM)) != NULL)
 	{
 		if (strlen(tok) < 2)
-			elog(ERROR, "dictionary token length should more than 1");
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 (errmsg("dictionary token length should more than 1"))));
 
 		ntokens++;
 		val = NULL;
 	}
 
 	if (ntokens < 1 || ntokens > 254)
-		elog(ERROR, "correct number of tokens should be specified (between 1 and 254)");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 (errmsg("correct number of tokens should be specified (between 1 and 254)"))));
 }
 
 /*
@@ -340,11 +350,15 @@ dict_compression_test(PG_FUNCTION_ARGS)
 {
 	Oid		 acoid = PG_GETARG_OID(0);
 	text	*t = PG_GETARG_TEXT_PP(1);
-	CompressionAmOptions	*amoptions = lookup_amoptions(acoid);
+	CompressionAmOptions	*amoptions = lookup_compression_am_options(acoid);
 	bytea	*res = dict_compress(amoptions, t);
-	toast_set_compression_info(res, amoptions->acoid,
-						VARSIZE_ANY_EXHDR(DatumGetPointer(t)));
-	PG_RETURN_BYTEA_P(res);
+	ereport(NOTICE,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 (errmsg("len: %lu", VARSIZE(res) - VARHDRSZ_CUSTOM_COMPRESSED))));
+
+	toast_set_compressed_datum_info(res, amoptions->acoid,
+								VARSIZE_ANY_EXHDR(DatumGetPointer(t)));
+	PG_RETURN_TEXT_P(res);
 }
 
 Datum

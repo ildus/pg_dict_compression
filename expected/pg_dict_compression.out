@@ -15,5 +15,69 @@ SELECT length(a) as len, a = repeat('0\0xFFhe00sher00lonshe00lohe00herhe00budger
  5300 | t
 (1 row)
 
+CREATE OR REPLACE FUNCTION dict_compression_test(OID, TEXT)
+RETURNS TEXT
+AS 'pg_dict_compression', 'dict_compression_test'
+LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION dict_compression_test_wrapper(input TEXT)
+RETURNS TEXT AS $$
+DECLARE
+	cmid OID;
+	res  TEXT;
+BEGIN
+	SELECT acoid FROM pg_attr_compression INTO cmid WHERE acrelid = 'c1'::regclass;
+	res := dict_compression_test(cmid, input);
+	RETURN res;
+END
+$$ LANGUAGE plpgsql;
+SELECT dict_compression_test_wrapper('shehe'); /* 4 */
+NOTICE:  len: 4
+ dict_compression_test_wrapper 
+-------------------------------
+ shehe
+(1 row)
+
+SELECT dict_compression_test_wrapper('budgerman');	/* 5 */
+NOTICE:  len: 5
+ dict_compression_test_wrapper 
+-------------------------------
+ budgerman
+(1 row)
+
+SELECT dict_compression_test_wrapper('budgerman00she');	/* 5 + 2 + 2 */
+NOTICE:  len: 9
+ dict_compression_test_wrapper 
+-------------------------------
+ budgerman00she
+(1 row)
+
+SELECT dict_compression_test_wrapper('sh');	/* 2 */
+NOTICE:  len: 2
+ dict_compression_test_wrapper 
+-------------------------------
+ sh
+(1 row)
+
+SELECT dict_compression_test_wrapper('lon00');	/* 5 */
+NOTICE:  len: 5
+ dict_compression_test_wrapper 
+-------------------------------
+ lon00
+(1 row)
+
+SELECT dict_compression_test_wrapper('long00');	/* 4 */
+NOTICE:  len: 4
+ dict_compression_test_wrapper 
+-------------------------------
+ long00
+(1 row)
+
+SELECT dict_compression_test_wrapper('{"budget": 1, "german": 2}'::json::text)::json;
+NOTICE:  len: 18
+ dict_compression_test_wrapper 
+-------------------------------
+ {"budget": 1, "german": 2}
+(1 row)
+
 DROP TABLE c1;
 DROP EXTENSION pg_dict_compression;
