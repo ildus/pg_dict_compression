@@ -23,6 +23,6 @@ $$ LANGUAGE plpgsql;
 
 SELECT test.dict_compression_test_wrapper(E'\\x6865FF736865'); /* 6 */
 SELECT test.dict_compression_test_wrapper(E'\\x627564676572FF6d616e');	/* null */
-SELECT test.dict_compression_test_wrapper(E'\\x627564676572FF6765726d616e');	/* 14 */
+SELECT test.dict_compression_test_wrapper(E'\\x627564676572FF6765726d616e');	/* 10 */
 
 DROP SCHEMA test CASCADE;

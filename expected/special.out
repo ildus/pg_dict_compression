@@ -28,7 +28,7 @@ NOTICE:  len: 6
 SELECT test.dict_compression_test_wrapper(E'\\x627564676572FF6d616e');	/* null */
 ERROR:  res is null
 CONTEXT:  PL/pgSQL function test.dict_compression_test_wrapper(bytea) line 7 at assignment
-SELECT test.dict_compression_test_wrapper(E'\\x627564676572FF6765726d616e');	/* 14 */
+SELECT test.dict_compression_test_wrapper(E'\\x627564676572FF6765726d616e');	/* 10 */
 NOTICE:  len: 10
  dict_compression_test_wrapper 
 -------------------------------

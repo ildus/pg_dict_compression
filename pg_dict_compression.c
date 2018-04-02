@@ -152,7 +152,7 @@ dict_append_tokens(dict_state *state)
 			uint8 c = (uint8) token[k];
 
 			/* 0xFF is reserved for mark of compressed token */
-			Assert(c < 255);
+			Assert(c != 0xFF);
 			if (state->nodes[nindex].next[c] == -1)
 			{
 				/* Create child node for this symbol */
