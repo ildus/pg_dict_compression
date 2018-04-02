@@ -99,4 +99,5 @@ ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict 'o'
 ERROR:  dictionary token length should more than 1
 ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict '');
 ERROR:  correct number of tokens should be specified (between 1 and 254)
+DROP TABLE c1;
 DROP EXTENSION pg_dict_compression;

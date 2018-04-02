@@ -252,9 +252,12 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 		/* escape 0xFF */
 		if (code = src[pos], code == 0xFF)
 		{
+			if (pos > initpos)
+				goto rem;
+
 			DEST_ADD(0xFF);
-			pos++;
-			initpos = pos;
+			curnode = &state->nodes[0];	/* start from the root */
+			initpos = pos++;
 			continue;
 		}
 
@@ -343,7 +346,9 @@ dict_decompress(CompressionAmOptions *cmoptions, const bytea *value)
 	}
 
 	/* check correctness */
-	Assert(pos == srclen && dpos == dstlen);
+	if (pos != srclen || dpos != dstlen)
+		elog(ERROR, "decompression error");
+
 	return res;
 }
 
@@ -354,9 +359,14 @@ dict_compression_test(PG_FUNCTION_ARGS)
 	text	*t = PG_GETARG_TEXT_PP(1);
 	CompressionAmOptions	*amoptions = lookup_compression_am_options(acoid);
 	bytea	*res = dict_compress(amoptions, t);
-	ereport(NOTICE,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 (errmsg("len: %lu", VARSIZE(res) - VARHDRSZ_CUSTOM_COMPRESSED))));
+	if (res != NULL)
+		ereport(NOTICE,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 (errmsg("len: %lu", VARSIZE(res) - VARHDRSZ_CUSTOM_COMPRESSED))));
+	else
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 (errmsg("res is null"))));
 
 	toast_set_compressed_datum_info(res, amoptions->acoid,
 								VARSIZE_ANY_EXHDR(DatumGetPointer(t)));

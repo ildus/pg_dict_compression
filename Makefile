@@ -6,7 +6,7 @@ EXTVERSION = 1.0
 DATA = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "dictionary compression method"
 
-REGRESS = $(EXTENSION)
+REGRESS = basic special
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

@@ -43,5 +43,6 @@ ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression;
 ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (alt 'one');
 ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict 'o');
 ALTER TABLE c1 ALTER COLUMN a SET COMPRESSION pg_dict_compression WITH (dict '');
+DROP TABLE c1;
 
 DROP EXTENSION pg_dict_compression;
