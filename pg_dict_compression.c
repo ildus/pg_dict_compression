@@ -102,7 +102,7 @@ dict_check(Form_pg_attribute att, List *options)
 	if (att->attlen != -1 || att->attstorage == 'p')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 (errmsg("dictionary compression is support for only variable length attributes"))));
+				 (errmsg("dictionary compression supports only variable length attributes"))));
 
 	if (list_length(options) != 1)
 		ereport(ERROR,
@@ -258,46 +258,44 @@ dict_compress(CompressionAmOptions *cmoptions, const bytea *value)
 			DEST_ADD(0xFF);
 			curnode = &state->nodes[0];	/* start from the root */
 			initpos = pos++;
-			continue;
 		}
-
-
-		if (curnode->next[code] != -1)
+		else if (curnode->next[code] != -1)
 		{
 			/* we found a child, change the current state to it */
 			curnode = &state->nodes[curnode->next[code]];
 			pos++;
-			continue;
 		}
-
-		level = curnode->level;
-		curnode = get_suffix_node(state, curnode);
-		if (curnode->level)
+		else
 		{
-			int diff;
-			diff = level - curnode->level;
+			level = curnode->level;
+			curnode = get_suffix_node(state, curnode);
+			if (curnode->level)
+			{
+				int diff;
+				diff = level - curnode->level;
 
-			/* we found a suffix node, copy beginning of previous prefix */
-			Assert(diff > 0);
-			memcpy(&dest[dpos], &src[initpos], diff);
-			dpos += diff;
-			initpos += diff;
-			continue;
+				/* we found a suffix node, copy beginning of previous prefix */
+				Assert(diff > 0);
+				memcpy(&dest[dpos], &src[initpos], diff);
+				dpos += diff;
+				initpos += diff;
+				continue;
+			}
+
+			/* prefix didn't match */
+			pos++;
+	rem:
+			copylen = (pos - initpos);
+			if (dpos + copylen > srclen)
+			{
+				pfree(res);
+				return NULL;
+			}
+
+			memcpy(&dest[dpos], &src[initpos], copylen);
+			dpos += copylen;
+			initpos = pos;
 		}
-
-		/* prefix didn't match */
-		pos++;
-rem:
-		copylen = (pos - initpos);
-		if (dpos + copylen > srclen)
-		{
-			pfree(res);
-			return NULL;
-		}
-
-		memcpy(&dest[dpos], &src[initpos], copylen);
-		dpos += copylen;
-		initpos = pos;
 	}
 
 	SET_VARSIZE_COMPRESSED(res, dpos + VARHDRSZ_CUSTOM_COMPRESSED);
